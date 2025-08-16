@@ -15,7 +15,7 @@ grid(ax, 'on'); hold(ax, 'on');
 
 controlPanel = uigridlayout(contentGrid);
 controlPanel.Layout.Row = 1; controlPanel.Layout.Column = 2;
-controlPanel.RowHeight = {'fit', 'fit', 'fit', 20, 'fit', 'fit', 20, 'fit', 'fit', 'fit', 'fit', 'fit', 20, 'fit', 'fit', 'fit'};
+controlPanel.RowHeight = {'fit', 'fit', 'fit', 20, 'fit', 'fit', 20, 'fit', 'fit', 'fit', 'fit', 'fit', 20, 'fit', 'fit', 'fit', 'fit'};
 controlPanel.ColumnWidth = {'fit', '1x', 'fit'};
 controlPanel.Padding = [10 10 10 20];
 
@@ -27,8 +27,8 @@ defaultParams.Kp = 50; defaultParams.Ki = 20; defaultParams.Kd = 5;
 defaultParams.J = 10; defaultParams.b = 2;
 defaultParams.intSepThreshold = 0.2;
 defaultParams.intLimit = 20;
-defaultParams.noiseAmplitude = 0.01; % 噪声幅值
-defaultParams.dFilterFc = 20;      % 微分滤波截止频率 (Hz)
+defaultParams.noiseAmplitude = 0.01; 
+defaultParams.dFilterFc = 20;      
 
 % 创建UI组件
 createSliderRow('比例 (Kp)', 'Kp', 1, [0, 500], defaultParams.Kp);
@@ -43,11 +43,14 @@ handles.intSepCheck = createCheckbox('启用积分分离', 9, false);
 createSliderRow('分离阈值', 'intSepThreshold', 10, [0.01, 2], defaultParams.intSepThreshold);
 handles.intLimitCheck = createCheckbox('启用积分限幅', 11, false);
 createSliderRow('积分限幅', 'intLimit', 12, [1, 100], defaultParams.intLimit);
-
 addSeparator(13);
 createSliderRow('反馈噪声幅值', 'noiseAmplitude', 14, [0, 0.5], defaultParams.noiseAmplitude);
 handles.dFilterCheck = createCheckbox('启用微分低通滤波', 15, true);
-createSliderRow('滤波截止频率 (Hz)', 'dFilterFc', 16, [1, 200], defaultParams.dFilterFc);
+filterModeLabel = uilabel(controlPanel, 'Text', '滤波器作用对象', 'HorizontalAlignment', 'right');
+filterModeLabel.Layout.Row = 16; filterModeLabel.Layout.Column = 1;
+handles.filterModeDropdown = uidropdown(controlPanel, 'Items', {'仅微分项', '整个反馈信号'}, 'Value', '仅微分项');
+handles.filterModeDropdown.Layout.Row = 16; handles.filterModeDropdown.Layout.Column = [2, 3];
+createSliderRow('滤波截止频率 (Hz)', 'dFilterFc', 17, [1, 200], defaultParams.dFilterFc);
 
 buttonPanel = uipanel(mainGrid, 'BorderType', 'none');
 buttonPanel.Layout.Row = 2; buttonPanel.Layout.Column = 1;
@@ -67,14 +70,22 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
     function createSliderRow(labelText, paramName, row, limits, defaultValue)
         label = uilabel(controlPanel, 'Text', labelText, 'HorizontalAlignment', 'right');
         label.Layout.Row = row; label.Layout.Column = 1;
+        
         slider = uislider(controlPanel, 'Limits', limits, 'Value', defaultValue);
         slider.Layout.Row = row; slider.Layout.Column = 2;
-        valueLabel = uilabel(controlPanel, 'Text', sprintf('%.2f', defaultValue), 'FontWeight', 'bold');
-        valueLabel.Layout.Row = row; valueLabel.Layout.Column = 3;
-        slider.ValueChangedFcn = @(src, ~) updateLabel(valueLabel, src.Value);
+        
+        editField = uieditfield(controlPanel, 'numeric', ...
+                               'Value', defaultValue, ...
+                               'FontWeight', 'bold', ...
+                               'ValueDisplayFormat', '%.2f', ...
+                               'Limits', limits);
+        editField.Layout.Row = row; editField.Layout.Column = 3;
+        slider.ValueChangedFcn = @(src, ~) set(editField, 'Value', src.Value);
+        editField.ValueChangedFcn = @(src, ~) set(slider, 'Value', src.Value);
+        
         handles.([paramName 'Slider']) = slider;
-        handles.([paramName 'ValueLabel']) = valueLabel;
     end
+    
     function chk = createCheckbox(labelText, row, defaultValue)
         chk = uicheckbox(controlPanel, 'Text', labelText, 'Value', defaultValue);
         chk.Layout.Row = row; chk.Layout.Column = [1, 3];
@@ -83,23 +94,22 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
         sep = uilabel(controlPanel, 'Text', '', 'BackgroundColor', [0.8 0.8 0.8]);
         sep.Layout.Row = row; sep.Layout.Column = [1, 3];
     end
-    function updateLabel(labelHandle, value)
-        labelHandle.Text = sprintf('%.2f', value);
-    end
 
 % 复位回调
     function resetSimulation(~, ~)
         params = {'Kp', 'Ki', 'Kd', 'J', 'b', 'intSepThreshold', 'intLimit', 'noiseAmplitude', 'dFilterFc'};
+        
         for i = 1:length(params)
             p = params{i};
             handles.([p 'Slider']).Value = defaultParams.(p);
-            updateLabel(handles.([p 'ValueLabel']), defaultParams.(p));
         end
+
         handles.derivOnMeasCheck.Value = true;
         handles.intSepCheck.Value = false;
         handles.intLimitCheck.Value = false;
         handles.dFilterCheck.Value = true;
         handles.inputTypeDropdown.Value = '阶跃响应';
+        handles.filterModeDropdown.Value = '仅微分项';
         cla(ax); title(ax, '系统响应曲线'); legend(ax, 'off');
         
         if isfield(handles, 'detailsFig') && isvalid(handles.detailsFig)
@@ -110,6 +120,8 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
 
 % 仿真回调
     function runSimulation(~, ~)
+        filterMode = handles.filterModeDropdown.Value;
+        
         Kp = handles.KpSlider.Value; Ki = handles.KiSlider.Value; Kd = handles.KdSlider.Value;
         J = handles.JSlider.Value; b = handles.bSlider.Value;
         useDerivOnMeas = handles.derivOnMeasCheck.Value;
@@ -133,34 +145,45 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
             titleText = '系统正弦跟踪响应';
         end
 
-        % 模型与滤波器离散化 
         s = tf('s');
         plant = 1 / (J*s^2 + b*s);
         d_plant = c2d(plant, dt, 'zoh');
         [A, B, C, D] = ssdata(d_plant);
         plant_states = zeros(size(A,1), 1);
         
-        % 计算低通滤波器系数 alpha
         tau = 1 / (2 * pi * dFilterFc);
         alpha = dt / (tau + dt);
-        filtered_derivative_term = 0; % 滤波器状态初始化
         
-        % --- 初始化变量 ---
+        filtered_derivative_state = 0;
+        y_measured_filtered_state = 0;
+        
         y = zeros(N, 1); u = zeros(N, 1);
         e = zeros(N, 1);
         integral_term = 0;
         prev_e = 0;
-        prev_y_measured = 0; % 使用测量值作为历史值
+        prev_y_for_pid = 0;
         p_term_vec = zeros(N, 1);
         i_term_vec = zeros(N, 1);
         d_term_vec = zeros(N, 1);
         
-        % 时域仿真
         for k = 1:N
             y_true = y(k);
-            y_measured = y_true + noiseAmplitude * randn();
             
-            e(k) = setpoint_signal(k) - y_measured;
+            noise_freq1 = 35; noise_freq2 = 50;
+            high_freq_noise = sin(2*pi*noise_freq1*t(k)) + 0.8*sin(2*pi*noise_freq2*t(k));
+            y_measured = y_true + noiseAmplitude * high_freq_noise;
+            
+            y_for_pid = 0;
+            
+            if useDFilter && strcmp(filterMode, '整个反馈信号')
+                y_measured_filtered = alpha * y_measured + (1 - alpha) * y_measured_filtered_state;
+                y_measured_filtered_state = y_measured_filtered;
+                y_for_pid = y_measured_filtered;
+            else
+                y_for_pid = y_measured;
+            end
+            
+            e(k) = setpoint_signal(k) - y_for_pid;
             
             error_for_integral = e(k);
             if useIntSep && (abs(e(k)) > intSepThreshold)
@@ -172,14 +195,14 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
             end
             
             if useDerivOnMeas
-                raw_derivative_term = Kd * (prev_y_measured - y_measured) / dt;
+                raw_derivative_term = Kd * (prev_y_for_pid - y_for_pid) / dt;
             else
                 raw_derivative_term = Kd * (e(k) - prev_e) / dt;
             end
 
-            if useDFilter
-                derivative_term = alpha * raw_derivative_term + (1 - alpha) * filtered_derivative_term;
-                filtered_derivative_term = derivative_term; % 更新滤波器状态
+            if useDFilter && strcmp(filterMode, '仅微分项')
+                derivative_term = alpha * raw_derivative_term + (1 - alpha) * filtered_derivative_state;
+                filtered_derivative_state = derivative_term;
             else
                 derivative_term = raw_derivative_term;
             end
@@ -196,13 +219,12 @@ handles.inputTypeDropdown = uidropdown(buttonPanel, 'Items', {'阶跃响应', '�
             y_out = C * plant_states + D * u(k);
             
             prev_e = e(k);
-            prev_y_measured = y_measured; % 保存的是带噪声的测量值
+            prev_y_for_pid = y_for_pid;
             if k < N
-                y(k+1) = y_out; % 更新的是理想的系统输出
+                y(k+1) = y_out;
             end
         end
         
-        % 绘图 
         cla(ax);
         plot(ax, t, y, 'b-', 'LineWidth', 1.5, 'DisplayName', '实际值 (理想)');
         plot(ax, t, setpoint_signal, 'r--', 'LineWidth', 1.5, 'DisplayName', '设定值');
